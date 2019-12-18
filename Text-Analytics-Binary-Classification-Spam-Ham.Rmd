@@ -1,0 +1,182 @@
+---
+title: "Binary Classification: text messages with spam/ham labels"
+author: "Illarion Jabine"
+date: "17/12/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Required packages:
+
+* [tidyverse]
+* [e1071]
+* [caret]: model building toolkit
+* [quanteda]: quantitative text analysis
+* [irlba]
+* [randomForest]
+* [randomForest]
+
+Other useful text analytics packages: tm, text2vec, tidytext (<https://www.tidytextmining.com/tidytext.html>)
+In this manual I will use quanteda package for text analytics.
+## Introduction
+
+
+In this manual I will use a classical spam example from kaggle: <https://www.kaggle.com/uciml/sms-spam-collection-dataset>
+
+If you want to play with some other texts, consider installing a package gutenbergr.
+This dataset contains actual email texts already labeled as spam or ham. We will go through the steps required to build a predictive model (in this case it is a binary classification problem). I will use caret package as a tool to fit the model.
+I assume that you have already prepared the textual data (using web scraping, string manipulation, etc).
+
+```{r load the libraries}
+library(tidyverse)
+library(e1071)
+library(caret)
+library(quanteda)
+library(irlba)
+library(randomForest)
+
+
+```
+
+
+## 1. Let's read the data from file "data/spam.csv". Then we will do some data cleaning.
+
+```{r reading and clean data}
+spam_df <- read.csv("data/spam.csv",stringsAsFactors = FALSE)  
+# As it's only first two columns that we need:
+spam_df <- spam_df[ , 1:2]
+
+# Let's give some useful names to these columns:
+names(spam_df) <- c("Label","Text")
+
+```
+
+## 2. Let's do some quick descriptive statistics. Perhaps the number of symbols in email text can serve as a good measure.
+
+```{r descriptive statistics}
+
+# Let's see the proportions of spam and ham:
+spam_ham_proportions <- prop.table(table(spam_df$Label))
+barchart(spam_ham_proportions)
+
+# Almost 87% of messages is ham. We have a class imbalance which means that during train/test split we will have to do stratified random sample to preserve this proportion.   
+
+# Let's add a new variable Text_Length, using mutate() from dplyr package:
+
+spam_df_stat <- spam_df %>% mutate(Text_Length = nchar(spam_df$Text)) # if you don't like dplyr you can use standard approach: spam_df$Text_Length <- nchar(spam_df$Text_Length)
+# If you don't like standard nchar() you can use str_length() from stringr package.
+
+# Let's see the distribution of text length for both spam and ham:
+
+ggplot(spam_df_stat) +
+ aes(x = Text_Length, fill = Label) +
+ geom_density(adjust = 1L) +
+ scale_fill_hue() +
+ theme_minimal()
+
+# It looks like spam messages have a tendency to be lengthier. Indeed, the mean of spam text is twice as large: 
+
+spam_df_stat %>% select(Label,Text_Length) %>% 
+  group_by(Label) %>%
+  summarise(Median = median(Text_Length), Mean = mean(Text_Length), Count = n())
+
+```
+
+## 3. Creating data partition using createDataPartition() from caret package:
+
+```{r Creating data partition}
+# setting a random seed for future reproducibility:
+set.seed(123)
+
+# Creating "Label" index with 70% of data that goes to training. 
+# createDataPartition() is smart enough to maintain the proportion by performing stratified random samples.
+# For more details on caret see manuals here: <https://github.com/ijabine/Model-Fitting-With-Caret>
+
+label_index <- createDataPartition(spam_df$Label, times = 1, p = 0.7, list = FALSE)
+
+# By using label_index we can now split or data into training and test sets:
+train <- spam_df[label_index, ]
+# -label_index: minus will exclude the training data points, so it will include test data points.
+test <- spam_df[-label_index, ]
+```
+
+## 4. We have prepared our training datasets with raw textual data. 
+Now we are ready to transform it into the format required for text analytics. This transformation process has several steps:
+ 1. Tokenization
+ 2. Creation of DFM: document-frequency matrix (aka document-term matrix)
+
+
+### 4.1 Tokenization
+
+Tokenization is a process of splitting or decomposing an input raw text into distinct pieces known as tokens. A token can be a single word, but can also be an n-gram, sentence, or paragraph. depending on a problem domain and business requirements you as an analytic has to decide how treat the following important questions:  
+ 1. What to do with casing (upper/lower case: There or there)?
+ 2. Include or exclude punctuation?
+ 3. How about numbers?
+ 4. Any stop words?
+ 5. Do you need symbols in you DFM?
+ 6. Word stemming (do, does, did, doing)
+ 
+I will use quanteda package to perform tokenization (?tokens for more options):
+```{r tokenization}
+# In this example we are going to create tokens and at the same time to remove numbers, punctuation, symbols and hyphens. Again it all depends on problem domain. use tokens() function
+train_terms <- tokens(train$Text, what = "word", remove_numbers = TRUE, remove_punct = TRUE,
+                       remove_symbols = TRUE, remove_hyphens = TRUE)
+
+# 1. let's say we would like to lower case our terms, to do that use tokens_tolower() function from quanteda
+train_terms <- tokens_tolower(train_terms)
+
+# 2. We have already removed punctuation when we created tokens.
+# 3. We have already removed numbers when we created tokens.
+# 4. Stop words: remove or not from tokens? For each subject area its own stopword list must be defined. Here we will a standard stop word list from stopwords package, see ?stopwords for more details. We will remove teh stop words using tokens_select():
+train_terms <- tokens_select(train_terms, stopwords(), selection = "remove")
+
+# 5. We have already removed numbers when we created tokens.
+# 6. Word stemming involves the process of taking similar root words and ollapsing them into one single (infinitive form) word. To perform stemming run tokens_wordstem():
+train_terms <- tokens_wordstem(train_terms, language = "english")
+
+```
+Now once all the text pre-prcessing is done we can create a DFM matrix.
+ 
+### 4.1 Document-Frequency Matrix (DFM)
+ The basic idea is to create a matrix where each row represents a document and each word (token) becomes a column. Each cell contains a count of the token for a document. 
+Basically we transform our data in unstructured text form into structured matrix form.  It is going to be a sparce matrix with lots of columns. The wrod oredering from the input text is not preserved in the DFM matrix, because the important thing is the frequency of terms. This is so called "bag-of-words" approach. 
+I will use dfm() function from quanteda package:
+```{r creation of DFM}
+train_dfm <- dfm(train_terms, tolower = FALSE)
+
+# dfm() function created an object train_dfm of type dfm. We need to convert this object into a data frame we need to use a method as.matrix.dfm from quanteda:
+
+train_matrix <- as.matrix(train_dfm)
+
+# The matrix is quite big and sparce
+dim(train_matrix)
+# To see only small part of it run View with first 100 documents:
+view(train_matrix[1:100,1:100])
+
+# Before we can start building the binary classification model we have to add the spam/ham labels to our train_matrix:
+
+train_terms_df <- cbind(Label = train$Label, as.data.frame(train_matrix))
+
+# As a precaution the column names must be syntactically (from R point of view) correct, to do so run make.names():
+names(train_terms_df) <- make.names(names(train_terms_df))
+```
+
+### 5. Building classification model
+
+
+```{r building a model, echo=TRUE, message=FALSE, warning=FALSE}
+cv.folds <- createMultiFolds(train$Label, k = 10, times = 3)
+
+
+cv.cntrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3, index = cv.folds)
+
+
+rpart.cv.1 <- train(Label ~ ., data = train_terms_df, method = "rpart", trControl = cv.cntrl, tuneLength = 7)
+
+
+```
+
