@@ -1,0 +1,194 @@
+---
+title: "Advanced, Predictive Text Analytics: SVM, decision tree "
+author: "Illarion Jabine"
+date: "10/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Required packages:
+
+* [tm]: Comprehensive text mining package
+* [caret]: Classification and Regression Training Toolbox
+* [readxl]: Read Excel Files
+ 
+
+### Key terms
+ * Bag of words
+ * Corpus
+ * Document-term matrix (DTM)/ term-document matrix(TDM)
+ * Text pre-processing
+ * caret
+ * Predictive text analytics
+ * SVM
+ * decision tree
+ 
+## Introduction
+
+
+
+### Load the libraries
+Let's first load the libraries. 
+```{r loading packages, message=FALSE, warning=FALSE}
+library(caret)
+library(readxl)
+library(tm)
+```
+
+
+### 1. Corpus Creation
+Read already labeled text from an excel file, create and preprocess the corpus:
+```{r read text, create corpus}
+text <- read_excel("Sueprvised sentiment Analysis/sentiment_training.xlsx")
+
+# Create a source vector required for corpus creation
+text_vect <-  VectorSource(text$Text)
+
+# Create a corpus of documents
+corpus <- VCorpus(text_vect)
+
+# Preprocessing the corpus
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removeWords, stopwords("en"))
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, stripWhitespace)
+
+# I have tried the model with trigrams, but because of the matrix size it takes ages to build it.
+# So instead I just use unigrams.
+#tokenizer <- function(x) {
+#  NGramTokenizer(x, Weka_control(min = 3, max = 3))
+#}
+#trigram_dtm <- DocumentTermMatrix(
+#  corpus, 
+#  control = list(tokenize = tokenizer)
+#)
+```
+
+### 2. Document Term Matrix Creation
+
+```{r Document Term Matrix }
+# Creation of DTM 
+dtm <- DocumentTermMatrix(corpus)
+
+# Converting DTM into matrix and matrix eventually to dataframe.
+text_matrix <- as.matrix(dtm)
+text_df <- as.data.frame(text_matrix)
+dim(text_matrix)
+
+# Adding target (dependent) variable to the data frame and convertinh it to factor 
+text_df$Sentiment <- text$Sentiment
+text_df$Sentiment <- factor(text_df$Sentiment)
+```
+
+
+### 3. Model Building
+
+Using caret createDataPartition() function let's create training and test sets. 
+
+```{r Create data partition}
+# an index vector for partitioning
+# text_df$Sentiment is our target variable
+# p - percentage of the split. 70% of the initial records will go to the training set
+# list = FALSE - does not return a list.
+partition <- createDataPartition(text_df$Sentiment,p = 0.7,list = FALSE)
+
+# Only records with indexes in partition vector will go to the training set
+training_set <- text_df[partition,]
+
+# "-partition" - meaning all the rest (noty part of the partition vector) go to the test set
+test_set <- text_df[-partition,]
+
+```
+
+### 3.1 Train Control Parameter
+
+If we need to test multiple models, we can define a training parameter that can be reused during the model fitting.
+There are plenty of arguments that trainControl() has. I think the most important are:
+ * method: The resampling method: "boot", "boot632", "optimism_boot", "boot_all", "cv", "repeatedcv", "LOOCV", "LGOCV" (for repeated training/test splits), "none" (only fits one model to the entire training set), "oob" (only for random forest, bagged trees, bagged earth, bagged flexible discriminant analysis, or conditional tree forest models), timeslice, "adaptive_cv", "adaptive_boot" or "adaptive_LGOCV"
+ * number: Either the number of folds or number of resampling iterations
+ * repeats: For repeated k-fold cross-validation only: the number of complete sets of folds to compute
+ * classProbs: a logical; should class probabilities be computed for classification models (along with predicted values) in each resample?
+ * summaryFunction: a function to compute performance metrics across resamples.
+```{r Train control}
+# I set repeats = 1, because higher value just kills my PC
+train_ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 1, classProbs = TRUE, summaryFunction = twoClassSummary)
+```
+
+### 3.2. Fitting the models 
+
+To fit a model use train() method.
+This is a very versatile and powerful function.
+The most important features:
+ 1. It can pre-process the data in various ways prior to model fitting: centering and scaling,
+ imputation, transforming predictors by using PCA or ICA
+ 2. The tuning parameter grid can be specified
+ 3. Training control parameter (previously defined in step 3.1) can be used 
+
+Let's build our first model: Support Vector Machine (SVM) Model of Text Analytics
+```{r SVM fitting}
+# SVM model building
+svm_Linear_model <- train(Sentiment ~., data = training_set, method = "svmLinear",
+                    trControl = train_ctrl,
+                    preProcess = c("center", "scale"),
+                    metric = "ROC")
+
+```
+
+Once the model is built we can validate its predictive power on a new set of text data. Use predict() method:
+
+```{r SVM model prediction}
+svm_Linear_test <- predict(svm_Linear_model,newdata = test_set)
+
+# Let's see how the model performs by comparing different performance metrics:
+
+confusionMatrix(data = svm_Linear_test, test_set$Sentiment)
+```
+
+Let's now build our second predictive model, Decision Tree.
+Note that now method = "gbm"
+```{r Decision Tree}
+gbm_model <- train(Sentiment ~., data = training_set, method = "gbm",
+                          trControl = trctrl,
+                          preProcess = c("center", "scale"),
+                          metric = "ROC")
+
+gbm_test <- predict(gbm_model,newdata = test_set)
+
+confusionMatrix(data = gbm_test, test_set$Sentiment)
+```
+
+### 3.3 Comparing two models
+
+Let's now compare the performance of the two models
+```{r}
+resamps <- resamples(list(SVM = svm_Linear_model,GBM = gbm_model))
+summary(resamps)
+
+trellis.par.set(caretTheme())
+
+dotplot(resamps, metric = "ROC")
+```
+
+### 3.4 Improving Model Performance
+
+Perhaps we can improve SVM model? Yes, indeed there is a model parameter that can be tuned. 
+Go here: http://topepo.github.io/caret/available-models.html and search for a model "svmLinear"
+This model is from kernlab package and the only tuning parameter is C.
+
+```{r}
+grid <- expand.grid(C = c(0,0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,5))
+svm_Linear_model_grid <- train(Sentiment ~., data = training_set, method = "svmLinear",
+                               trControl = trctrl,
+                               preProcess = c("center", "scale"),
+                               tuneGrid = grid,
+                               metric = "ROC")
+
+plot(svm_Linear_model_grid)
+svm_Linear_grid_test <- predict(svm_Linear_model_grid,newdata = test_set)
+confusionMatrix(data = svm_Linear_grid_test, test_set$Sentiment)
+```
+
+The model performance has been improved
