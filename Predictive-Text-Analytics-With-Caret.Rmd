@@ -41,7 +41,7 @@ library(tm)
 ### 1. Corpus Creation
 Read already labeled text from an excel file, create and preprocess the corpus:
 ```{r read text, create corpus}
-text <- read_excel("Sueprvised sentiment Analysis/sentiment_training.xlsx")
+text <- read_excel("Predictive-Modeling-In-R/data/predictive_text_analytics.xlsx")
 
 # Create a source vector required for corpus creation
 text_vect <-  VectorSource(text$Text)
