@@ -1,0 +1,166 @@
+---
+title: "Untitled"
+author: "Customer churn prediction using decision tree model"
+date: "11/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+
+### Required packages:
+
+* [caret]: Classification and Regression Training Toolbox
+* [tidyverse]: Essential everyday tools 
+* [lubridate]: Loads of functions to work with dates
+ 
+
+### Key terms
+ * Missing value imputation
+ * Decision tree
+ 
+## Introduction
+
+
+
+### 1. Load the libraries
+Let's first load the libraries. 
+```{r loading packages, message=FALSE, warning=FALSE}
+library(caret)
+library(readxl)
+library(tm)
+```
+
+### 2. Loading and checking the data
+
+
+
+Load a customer dataset that contains customer the following attributes:
+- Age
+- Technology used
+- Date since he/she is a customer
+- Average bill last year
+- Number of support calls
+- Did he/she abandon last year (target label column)?
+
+```{r load the data and check if any NAs}
+
+# Loading data from Rds file
+input_df <- readRDS("data/churn_prediction1.Rds")
+
+# Checking if there are any NAs:
+anyNA(input_df)
+summary(input_df)
+
+# Yep, in ChurnIndicator:
+which(is.na(input_df$ChurnIndicator))
+input_df[9362,]
+
+```
+
+
+### 3. Imputing NAs
+
+caret package has a function preProcess() that can perform different types of missing value imputations.
+```{r}
+NAs_preProcess <- preProcess(input_df,method = c("bagImpute"),k = 10)
+input_df_No_NAs <- predict(NAs_preProcess, input_df,na.action = na.pass)
+```
+
+### 4. Convert the numerical churn column to binary
+
+Let's change the type of numeric attribute "ChurnIndicator" to a binominal type.
+If the value of an attribute is less than the specified boundary value, it becomes 'false', otherwise 'true'.  
+```{r churn numerical -> binary}
+# Adding a new binary variable Churned
+input_df_No_NAs$Churned <- ifelse(input_df_No_NAs$ChurnIndicator > 0.5,"True","False")
+
+# Converting it to factor
+input_df_No_NAs$Churned <- factor(input_df_No_NAs$Churned)
+
+# Deleting no longer required ChurnIndicator
+input_df_No_NAs$ChurnIndicator <- NULL
+```
+
+### 5. Let's work with the date column
+
+CustomerSince column is in text format: "Thu Jun 06 16:27:16 CEST 2013".
+Let's convert it to the date using lubridate package.
+
+```{r}
+# First we split the elements of the string into several parts and save it as a data frame
+date_df <- as.data.frame(str_split(input_df_No_NAs$CustomerSince," ",simplify = TRUE))
+
+# Now paste some of these elements, convert it into data and save it back into CustomerSince in our input data frame
+input_df_No_NAs$CustomerSince <- dmy(paste(date_df$V3,date_df$V2,date_df$V6,sep = "/"))
+```
+
+### 6. Churn model building using decision tree
+
+### 6.1 Create data partitions
+
+Using caret createDataPartition() function let's create training and test sets. 
+
+```{r Create data partition}
+# an index vector for partitioning
+# input_df_No_NAs$Churned is our target variable
+# p - percentage of the split. 70% of the initial records will go to the training set
+# list = FALSE - does not return a list.
+part <- createDataPartition(input_df_No_NAs$Churned,p=0.7,list = FALSE)
+
+# Only records with indexes in partition vector will go to the training set
+train_df <- input_df_No_NAs[part,]
+
+# "-part" - meaning all the rest (noty part of the partition vector) go to the test set
+test_df <- input_df_No_NAs[-part,]
+
+```
+
+
+### 6.2 Train Control Parameter
+
+If we need to test multiple models, we can define a training parameter that can be reused during the model fitting.
+There are plenty of arguments that trainControl() has. I think the most important are:
+ * method: The resampling method: "boot", "boot632", "optimism_boot", "boot_all", "cv", "repeatedcv", "LOOCV", "LGOCV" (for repeated training/test splits), "none" (only fits one model to the entire training set), "oob" (only for random forest, bagged trees, bagged earth, bagged flexible discriminant analysis, or conditional tree forest models), timeslice, "adaptive_cv", "adaptive_boot" or "adaptive_LGOCV"
+ * number: Either the number of folds or number of resampling iterations
+ * repeats: For repeated k-fold cross-validation only: the number of complete sets of folds to compute
+ * classProbs: a logical; should class probabilities be computed for classification models (along with predicted values) in each resample?
+ * summaryFunction: a function to compute performance metrics across resamples.
+```{r Train control}
+
+control <- trainControl(method = "repeatedcv",repeats = 3,number = 10,classProbs = TRUE, summaryFunction = twoClassSummary)
+```
+
+### 6.3. Fitting the churn prediction model 
+
+To fit a model use train() method.
+This is a very versatile and powerful function.
+The most important features:
+ 1. It can pre-process the data in various ways prior to model fitting: centering and scaling,
+ imputation, transforming predictors by using PCA or ICA
+ 2. The tuning parameter grid can be specified
+ 3. Training control parameter (previously defined in step 6.2) can be used
+```{r}
+rpart_model <- train(Churned~.,data = train_df, method = "rpart",
+                     trControl = control,
+                     preProcess = c("center", "scale"),
+                     metric = "ROC")
+```
+
+
+### 6.4 Validating the model
+Once the model is built we can validate its predictive power on a new set of text data. Use predict() method:
+
+```{r decision model prediction}
+churn_prediction <- predict(rpart_model,newdata = test_df)
+
+# Let's see how the model performs by comparing different performance metrics:
+
+confusionMatrix(data = churn_prediction, test_df$Churned)
+```
