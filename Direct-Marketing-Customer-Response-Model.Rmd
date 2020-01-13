@@ -1,0 +1,134 @@
+---
+title: 'Direct Marketing: Customer Response Model'
+author: "Illarion  Jabine"
+date: "11/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+
+### Required packages:
+
+* [caret]: Classification and Regression Training Toolbox
+* [tidyverse]: Essential everyday tools 
+* [lubridate]: Loads of functions to work with dates
+* [FSelector]: Selecting Attributes
+* [CORElearn]: Classification, Regression and Feature Evaluation
+* [CustomerScoringMetrics]: Evaluation Metrics for Customer Scoring Models Depending on Binary Classifiers 
+* [ROCR]: Visualizing the Performance of Scoring Classifiers
+
+### Key terms
+ * Feature Selection 
+ * Weight by Information Gain
+ * Naive bayes
+ * ROC curve
+ * Cumulative Gains and Lift Charts
+ * Gains table/chart
+ * Lift curve
+ * Kolmogorov-Smirnov (K-S)
+ * Confusion matrix
+ * AUC
+ * Dual Lift Chart
+
+### Useful Links
+<http://www2.cs.uregina.ca/~dbd/cs831/notes/lift_chart/lift_chart.html>
+
+## Introduction
+
+In this exercise I will build direct marketing prediction model.
+This model will be based on past responses to targeted marketing campaigns. I will use naive bayes as a classification model, predicting binary outcome, i.e. will a customer respond to a campaign or not.
+The model will be applied to a new marketing campaign data se, trying to identify and target those customers who are most likely to respond.
+
+
+### 1. Load the libraries
+Let's first load the libraries. 
+```{r loading packages, message=FALSE, warning=FALSE}
+# Note: As i will load Java based packages I need to do this: Sys.setenv('JAVA_HOME' = 'C:/Program Files/Java/jre1.8.0_221/')
+library(caret)
+library(tidyverse)
+library(CORElearn)
+library(FSelector)
+
+```
+https://be.linkedin.com/in/illarionjabine
+### 2. Loading and checking the data
+
+Load and prepare data from past marketing campaigns.
+It includes customer attributes such as age, gender, area, the way the customer communicated, 
+and buying behaviour like usage of services, etc.
+This data set will serve as a training set for model building.
+I will also load a data set with potential recipients from new campaigns.
+
+```{r load the data and pre-process them}
+# Loading data from Rds file
+load("direct_marketing_data.Rds")
+
+# Checking if there are any NAs:
+anyNA(new_marketing_campaign)
+anyNA(past_marketing_campaign)
+str(new_marketing_campaign)
+
+# Each campaign data set contains a customer name, which does not really bring any useful information.
+# Moreover down the line, when I try to apply a model to a new campaign data set the system will throw me an error:
+# Error in model.frame.default(Terms, newdata, na.action = na.action, xlev = object$xlevels) : 
+#  factor Name has new levels ACEVEDO, ALEXANDER,...
+# As these are new customers the model can't find them in the training data set. It's better to remove the names
+past_marketing_campaign$Name <- NULL
+new_marketing_campaign$Name <- NULL
+```
+
+### 3. Feature Selection 
+
+In very wide data sets, feature (attributes/dependent variables) selection and evaluation can play an important role.
+Attribute selection is the process of identifying and removing as much of the irrelevant and redundant information as possible.
+There are several feature selection and evaluation packages available in R:
+* CORElearn
+* FSelector
+These packages allow to evaluate the quality of the features by using variuos evaluation algorithms.
+The end result is the weight assigned to each feature. In this example I will use information gain method.
+We can compare and contrast the results returned by two packages.
+ Note: Don't forget to set your JAVA home for FSelector (Sys.setenv('JAVA_HOME' = 'C:/Program Files/Java/jre1.8.0_221/'))
+```{r Feature Selection: Weight by Information Gain}
+#CORElearn::attrEval
+info_gain.CORElearn <- attrEval(Response ~ ., data = past_marketing_campaign,  estimator = "InfGain")
+
+#FSelector::information.gain
+info_gain.FSelector <- information.gain(Response ~ ., data = past_marketing_campaign,)
+
+# Let's compare
+barchart(sort(info_gain.CORElearn, decreasing = FALSE))
+
+rownames_to_column(info_gain.FSelector,"Value") %>% ggplot(aes(x = Value, weight = attr_importance)) +
+ geom_bar(fill = "#0c4c8a") +
+ coord_flip()
+
+```
+
+### 4. Building and Applying the Model
+
+```{r}
+control <- trainControl(method = "repeatedcv",repeats = 3,number = 10,classProbs = TRUE, summaryFunction = twoClassSummary)
+
+naive_bayes_model <- train(Response~.,data = past_marketing_campaign, method = "naive_bayes",
+                     trControl = control,
+                     preProcess = c("center", "scale"),
+                     metric = "ROC")
+
+naive_bayes_test <- predict(naive_bayes_model,newdata = new_marketing_campaign)
+
+```
+
+### 5. Analysis of the Direct Marketing Predictive Model
+
+
+### 5.1. Calculating the Cost Thresholds
+
+Marketing campaign involves both costs and benefits.
+
