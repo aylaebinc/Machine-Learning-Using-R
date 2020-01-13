@@ -1,6 +1,6 @@
 ---
-title: "Untitled"
-author: "Customer churn prediction using decision tree model"
+title: "Customer churn prediction using decision tree model"
+author: "Illarion Jabine"
 date: "11/01/2020"
 output: html_document
 ---
