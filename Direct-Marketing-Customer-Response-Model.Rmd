@@ -57,7 +57,7 @@ library(CORElearn)
 library(FSelector)
 
 ```
-https://be.linkedin.com/in/illarionjabine
+
 ### 2. Loading and checking the data
 
 Load and prepare data from past marketing campaigns.
@@ -114,14 +114,20 @@ rownames_to_column(info_gain.FSelector,"Value") %>% ggplot(aes(x = Value, weight
 ### 4. Building and Applying the Model
 
 ```{r}
+data_partition <- createDataPartition(past_marketing_campaign$Response,p = 0.7,list = FALSE)
+
+train_data_set <- past_marketing_campaign[data_partition,]
+test_data_set <- past_marketing_campaign[-data_partition,]
+test_data_set$Response <- as.factor(test_data_set$Response)
+
 control <- trainControl(method = "repeatedcv",repeats = 3,number = 10,classProbs = TRUE, summaryFunction = twoClassSummary)
 
-naive_bayes_model <- train(Response~.,data = past_marketing_campaign, method = "naive_bayes",
+naive_bayes_model <- train(Response~.,data = train_data_set, method = "naive_bayes",
                      trControl = control,
                      preProcess = c("center", "scale"),
                      metric = "ROC")
 
-naive_bayes_test <- predict(naive_bayes_model,newdata = new_marketing_campaign)
+naive_bayes_test <- predict(naive_bayes_model,newdata = test_data_set)
 
 ```
 
@@ -130,5 +136,28 @@ naive_bayes_test <- predict(naive_bayes_model,newdata = new_marketing_campaign)
 
 ### 5.1. Calculating the Cost Thresholds
 
-Marketing campaign involves both costs and benefits.
+Marketing campaign involves both costs and benefits. We would like to exclude the customers who are not interested and reach only those intrested.
+Otherwise, skipping customers who would have responded, incurs a higher cost than addressing somebody who does not respond.
+Obviously, we don't want to waste our marketing budget and send promo materieals to customers who are not interested.
+Hence, there is a question of how much the classification threashold should be and calculate these costs and probabilities?
+We have to specify costs of missing a potential buyers vs. the costs of including somebody into the campaign.
+The consequences of the classification are also impacted by where you put the classification threshold,
+which bytself depends on the data.
+In this particular example, we need to weight the costs of not addressing the customers who might potentially response,
+to the cost of sending promotions to those who don't need them.
+To answer all these question, special techniques are developed: confusion matrix, ROC analysis,UAC,gains and lift charts, etc.
+Bascially we need to perform a cost/benefit analysis.
+Where benefits are represented by True Positive Rate and costs are represented by False Positive Rate 
+calculated from the confusion matrix.
+The best possible prediction method will give a point in the upper left corner (0,1) of the ROC space,i.e. 100% TPR and 0% FPR
+
+```{r}
+
+confusion_matrix <- confusionMatrix(data = naive_bayes_test,test_data_set$Response)
+confusion_matrix
+
+# We can calculate the accuracy using formula below: 
+accuracy <- sum(diag(as.matrix(confusion_matrix))/sum(as.matrix(confusion_matrix)))
+
+```
 
