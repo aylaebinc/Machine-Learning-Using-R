@@ -1,0 +1,136 @@
+---
+title: 'Anomaly (Outlier) Detection'
+author: "Illarion  Jabine"
+date: "12/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+
+### Required packages:
+
+* [AnomalyDetection]: Anomaly Detection Using Seasonal Hybrid Extreme Studentized Deviate Test
+* [outliers]: Tests for outliers 
+* [devtools]: Required to install AnomalyDetection and isofor from github
+* [FNN]: Fast Nearest Neighbor Search Algorithms
+* [dbscan]: Density Based Clustering of Applications with Noise
+* [isofor]: Isolation Forest Anomaly Detection
+
+
+### Key terms
+ * Grubbs' test 
+ * Seasonal Hybrid ESD algorithm
+ * Distance and density based anomaly detection
+ * kNN distance matrix
+ * kNN distance score
+ * Density based clustering
+ * Local Outlier Factors (LOF)
+ * Isolation Forest anomaly detection
+ * Grid
+ * Anomaly contours
+
+
+### Useful Links
+<https://github.com/twitter/AnomalyDetection>
+<https://github.com/Zelazny7/isofor>
+
+## Introduction
+
+Anomaly or outlier detection is the process of assessing whether data contain unusual points. Points that stand out "away" from the major hord of points.
+real life examples can be a sudden spike in a normal flow of credit card transactions,
+or bizzare event in normal behaviour.
+The anomaly detection is widely used in fraud, intrusion etc detection problems.
+In this manual I will cover anomaly detection for:
+ 1. Univariate data
+ 2. Time series
+ 3. Multivariate data.
+
+### 1. Load the libraries
+Let's first load the libraries.
+Note: When installing isofor and AnomalyDetection, the system will ask you to install RBuildTools. 
+Click Yes, wait once it's installed, restart R and relaunch the package installation.
+```{r loading packages, message=FALSE, warning=FALSE}
+devtools::install_github("twitter/AnomalyDetection")
+devtools::install_github("Zelazny7/isofor")
+library(AnomalyDetection)
+library(isofor)
+library(outliers)
+library(FNN)
+library(dbscan)
+
+```
+
+### 2. Loading and checking the data
+
+Load and check the datasets.
+River dataset:
+* index - the order of the nitrate observations 
+* nitrate - monthly concentrations of dissolved nitrate found in a river
+* month - a factor containing the month for each nitrate observation
+Wine dataset: different characteristics of wines.
+```{r load the data and pre-process them}
+# Loading data from Rds file
+load("data/anomaly_detection.Rds")
+
+# Checking if there are any NAs:
+anyNA(river_nitrate)
+anyNA(wine)
+
+```
+
+### 3. Univariate anomaly test: Grubbs' test
+
+Before using Grubbs' test, we have to check if the data are normally distributed.
+hist() function can help to judge about the normal assumption.
+```{r Grubbs' test}
+attach(river_nitrate)
+hist(nitrate, xlab = "Nitrate concentration", breaks = 30)
+boxplot(nitrate)
+summary(nitrate)
+# Now let's apply Grubbs' outlier test
+grubbs.test(nitrate)
+
+```
+
+The logic of the Grubbs' test is the following:
+the lower the p-value returned by the test, the higher the likelihood that the point tested was an outlier.
+It looks like the maximum value in nitrate variable is indeed outlier.
+Let's find its index delete this value and run test again.
+
+```{r another outlier?}
+grubbs.test(nitrate[-which.max(nitrate)])
+# p-value > 0.05, so the next point is not outlier.
+
+# However, boxplot still treats it as an outlier.
+boxplot(nitrate[-which.max(nitrate)])
+```
+
+### 4. Anomaly Detection In A Time Series
+
+<https://blog.twitter.com/engineering/en_us/a/2015/introducing-practical-and-robust-anomaly-detection-in-a-time-series.html>
+
+```{r}
+# Show the time series of nitrate concentrations with time
+plot(nitrate ~ index, type = "o")
+
+# Calculate the mean nitrate by month, using tapply(): tapply(X, INDEX, FUN = NULL):
+# X object over which we apply function
+# INDEX a list of factors used for splitting.
+monthly_mean <- tapply(nitrate, months, FUN = mean)
+
+# Plot the monthly means 
+plot(monthly_mean, type = "o", xlab = "Month", ylab = "Monthly mean")
+
+
+# Create a boxplot of nitrate against months
+boxplot(nitrate ~ months)
+
+```
+
