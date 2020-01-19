@@ -44,8 +44,13 @@ knitr::opts_chunk$set(
 ## Introduction
 
 Anomaly or outlier detection is the process of assessing whether data contain unusual points. Points that stand out "away" from the major hord of points.
-real life examples can be a sudden spike in a normal flow of credit card transactions,
+A good definition of an anomaly:
+It is a data point or collection of data points that do not follow the same pattern 
+or have the same structure as the rest of the data.
+Real life examples can be a sudden spike in a normal flow of credit card transactions,
 or bizzare event in normal behaviour.
+ * A point anomaly is a single data point which is unusual when compared to the rest of the data.
+ * Collective anomaly is an anomalous collection of data points. They are unusual when considred together.
 The anomaly detection is widely used in fraud, intrusion etc detection problems.
 In this manual I will cover anomaly detection for:
  1. Univariate data
@@ -92,7 +97,7 @@ hist() function can help to judge about the normal assumption.
 ```{r Grubbs' test}
 attach(river_nitrate)
 hist(nitrate, xlab = "Nitrate concentration", breaks = 30)
-boxplot(nitrate)
+boxplot(nitrate, ylab = "Nitrate concentration")
 summary(nitrate)
 # Now let's apply Grubbs' outlier test
 grubbs.test(nitrate)
@@ -112,11 +117,14 @@ grubbs.test(nitrate[-which.max(nitrate)])
 boxplot(nitrate[-which.max(nitrate)])
 ```
 
-### 4. Anomaly Detection In A Time Series
+### 4. Anomaly Detection in a Time Series
 
+Great article on anomaly detection and AnomalyDetection package:
 <https://blog.twitter.com/engineering/en_us/a/2015/introducing-practical-and-robust-anomaly-detection-in-a-time-series.html>
 
-```{r}
+
+Let us first do explorative study of the time series
+```{r exploring time series}
 # Show the time series of nitrate concentrations with time
 plot(nitrate ~ index, type = "o")
 
@@ -129,8 +137,107 @@ monthly_mean <- tapply(nitrate, months, FUN = mean)
 plot(monthly_mean, type = "o", xlab = "Month", ylab = "Monthly mean")
 
 
-# Create a boxplot of nitrate against months
+# Create aset of boxplots of nitrate against months
 boxplot(nitrate ~ months)
 
+```
+From the initial analysis we could conclude that ther is a repeating seasonal cycle of 1é months.
+Let's now use Seasonal-Hybrid ESD algorithm to understand where the anomalies occur within the time series data.
+
+### 4.1 Seasonal-Hybrid ESD algorithm
+
+AnomalyDetectionVec() function from AnomalyDetection package generates a list with the two elements:
+ *anoms: Data frame containing index, values, and optionally expected values.
+ *plot: A graphical object if plotting was requested by the user. The plot contains the estimated anomalies annotated on the input time series.
+
+```{r SH ESD}
+anomalies_sh_esd <- AnomalyDetectionVec(x = river_nitrate$nitrate, period = 12, direction = 'both', plot = T)
+
+# Print the anomalies
+anomalies_sh_esd$anoms
+
+# Print the plot
+print(anomalies_sh_esd$plot)
+```
+
+### 5. Distance and Density Based Anomaly Detection
+
+Here I will use two functions:
+ 1. FNN::get.knn() - distance based anomaly detection
+ 2. dbscan::lof() - Local outlier factor score
+k-nearest neighbors distance and local outlier factor use the distance or relative density of the nearest neighbors to score each point.
+### 5.1 Distance based anomaly detection
+
+FNN::get.knn() creates a kNN distance matrix.
+This matrix has n rows, where n is the number of data points 
+and k  columns, where k is the user-chosen number of neighbors.
+The entry in row i and column j of the distance matrix is the distance between point i and its jth nearest neighbor.
+The distance matrix is only appropriate for numeric continuous data.
+Another important consideration is standardizing (with similar means and quartiles) features. Without standardization, features have different scales.
+
+```{r kNN matrix}
+anomalies_knn <- get.knn(scale(wine), k = 10)
+
+# View the distance matrix
+head(anomalies_knn$nn.dist)
+```
+
+Now let's calculate the nearest neighbor distance score.
+It can be calculated by averaging the nearest neighbor distances for each point. 
+Large values of the distance score can be interpreted as indicating the presence of unusual or anomalous points.
+```{r the nearest neighbor distance score}
+# Create score by averaging distances
+knn_distance_scores <- rowMeans(anomalies_knn$nn.dist)
+
+# Append the score as a new column 
+wine$score_knn <- knn_distance_scores
+
+# Let us plot the sulphates, alcohol and score_knn:
+plot(sulphates ~ alcohol,data = wine, cex = sqrt(score_knn), pch = 20)
+
+```
+
+### 5.2 Local Outlier Factors (LOF) using dbscan
+
+It's said that kNN is useful for finding global anomalies, whereas for local outliers we can use LOF.
+I will use lof() function from dbscan package.
+
+```{r LOF}
+# k: the number of neighbors used to calculate the LOF.
+lof_score <- lof(scale(wine[-14]), k = 10)
+
+# Append the LOF score as a new column
+wine$score_lof <- lof_score
+
+# Scatterplot showing the sulphates, alcohol and LOF score
+plot(sulphates ~ alcohol, data = wine, cex = sqrt(score_lof), pch = 20)
+
+```
+
+### 5.3 kNN vs LOF
+
+```{r}
+#Print the row indices of the wine data with highest kNN score and highest LOF score.
+# Find the row location of highest kNN
+which.max(wine$score_knn)
+
+# Find the row location of highest LOF
+which.max(wine$score_lof)
+
+# Local anomalies aren't always the farthest from the rest of the data. 
+```
+
+### 6. Isolation forest algorithm
+
+Isolation forest is a tree-based approach, a fast and robust method that measures how easily points can be separated by randomly splitting the data into smaller and smaller regions.
+It can handl both numerical and categorical data.
+I will use iForest() from isofor package.
+
+Let's first build one single tree (nt = 1)
+```{r single tree}
+# let's exclude scores from knn and lof
+wine_iso <- wine[-c(14,15)]
+
+wine_1_iso_tree <- iForest(wine_iso, nt = 1)
 ```
 
